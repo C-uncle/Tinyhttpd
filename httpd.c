@@ -76,9 +76,9 @@ void accept_request(void *arg)
     j=i;
     method[i] = '\0';
 
-    if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
+    if (strcasecmp(method, "GET") && strcasecmp(method, "POST")) // strcasecmp 忽略大小写的字符串比较
     {
-        unimplemented(client);
+        unimplemented(client); // 返回响应501
         return;
     }
 
@@ -103,18 +103,21 @@ void accept_request(void *arg)
         if (*query_string == '?')
         {
             cgi = 1;
-            *query_string = '\0';
+            *query_string = '\0'; // 为什么要将?换成\0 可能只是做一个单纯的分割，因为后面需要将query_string传给execute_cgi
+            // query_string 本身是一个char指针，不加应该也没有什么影响吧，毕竟下一行还进行了++操作
+            // 此时访问query_string，应该就是请求路径里?后面的部分
             query_string++;
         }
     }
 
-    sprintf(path, "htdocs%s", url);
+    sprintf(path, "htdocs%s", url); // sprintf 可以将"htdocs%s"的%s替换为url，并将替换后的结果存放在path
     if (path[strlen(path) - 1] == '/')
-        strcat(path, "index.html");
-    if (stat(path, &st) == -1) {
+        strcat(path, "index.html"); // strcat 将"index.html"追加到path结尾
+    if (stat(path, &st) == -1) { // stat 将参数file_name 所指的文件状态, 复制到参数buf 所指的结构中 失败返回-1
+    // 这里应该是在判断请求要访问的资源是否存在
         while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
             numchars = get_line(client, buf, sizeof(buf));
-        not_found(client);
+        not_found(client); // 返回404
     }
     else
     {
@@ -123,7 +126,12 @@ void accept_request(void *arg)
         if ((st.st_mode & S_IXUSR) ||
                 (st.st_mode & S_IXGRP) ||
                 (st.st_mode & S_IXOTH)    )
-            cgi = 1;
+            cgi = 1; // 这里是在判断请求要访问的资源是否是可执行文件
+            /*
+            S_IXUSR (S_IEXEC) 00100 文件所有者具可执行权限
+            S_IXGRP 00010 用户组具可执行权限
+            S_IXOTH 00001 其他用户具可执行权限上述的文件类型在 POSIX 中定义了检查这些类型的宏定义 
+            */
         if (!cgi)
             serve_file(client, path);
         else
@@ -351,6 +359,7 @@ int get_line(int sock, char *buf, int size)
 void headers(int client, const char *filename)
 {
     char buf[1024];
+    // 不能理解
     (void)filename;  /* could use filename to determine file type */
 
     strcpy(buf, "HTTP/1.0 200 OK\r\n");
@@ -412,8 +421,8 @@ void serve_file(int client, const char *filename)
         not_found(client);
     else
     {
-        headers(client, filename);
-        cat(client, resource);
+        headers(client, filename); // 发送响应头
+        cat(client, resource); // 发送文件内容
     }
     fclose(resource);
 }
@@ -432,27 +441,28 @@ int startup(u_short *port)
     int on = 1;
     struct sockaddr_in name;
 
-    httpd = socket(PF_INET, SOCK_STREAM, 0);
+    httpd = socket(PF_INET, SOCK_STREAM, 0); // 建立tcp socket
     if (httpd == -1)
         error_die("socket");
     memset(&name, 0, sizeof(name));
-    name.sin_family = AF_INET;
-    name.sin_port = htons(*port);
-    name.sin_addr.s_addr = htonl(INADDR_ANY);
-    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0)  
+    name.sin_family = AF_INET; // 协议
+    name.sin_port = htons(*port); // 端口
+    name.sin_addr.s_addr = htonl(INADDR_ANY); // ip INADDR_ANY 是指监听全部的网卡，可以理解为监听0.0.0.0
+    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0)  // 设置端口复用
     {  
         error_die("setsockopt failed");
     }
-    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
+    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0) // 将socket和ip，端口进行绑定
         error_die("bind");
     if (*port == 0)  /* if dynamically allocating a port */
     {
+        // 如果port为0，那么前面调用的bin函数，会自动分配一个端口
         socklen_t namelen = sizeof(name);
-        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
+        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1) // 获取套接字信息
             error_die("getsockname");
         *port = ntohs(name.sin_port);
     }
-    if (listen(httpd, 5) < 0)
+    if (listen(httpd, 5) < 0) // 开始监听，并设置最大连接数为5
         error_die("listen");
     return(httpd);
 }
@@ -495,17 +505,20 @@ int main(void)
     socklen_t  client_name_len = sizeof(client_name);
     pthread_t newthread;
 
-    server_sock = startup(&port);
+    server_sock = startup(&port); // 调用startup，监听port端口，返回套接字
     printf("httpd running on port %d\n", port);
 
     while (1)
     {
+        // 获取连接
         client_sock = accept(server_sock,
                 (struct sockaddr *)&client_name,
                 &client_name_len);
         if (client_sock == -1)
             error_die("accept");
         /* accept_request(&client_sock); */
+        // 调用pthread_create创建线程。accept_request是要执行的函数，client_sock是传给accept_request的参数
+        // 我不是很懂第四个参数的写法（即client_sock）
         if (pthread_create(&newthread , NULL, (void *)accept_request, (void *)(intptr_t)client_sock) != 0)
             perror("pthread_create");
     }
