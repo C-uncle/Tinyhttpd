@@ -243,7 +243,7 @@ void execute_cgi(int client, const char *path,
             numchars = get_line(client, buf, sizeof(buf));
         }
         if (content_length == -1) {
-            bad_request(client);
+            bad_request(client); // POST请求，但content_length不正常，返回报错响应
             return;
         }
     }
@@ -251,7 +251,7 @@ void execute_cgi(int client, const char *path,
     {
     }
 
-
+    // pipe(cgi_output) 调用后cgi_output有两个文件描述符，[0]是读，[1]是写，注意，两个都是单向的。
     if (pipe(cgi_output) < 0) {
         cannot_execute(client);
         return;
@@ -267,18 +267,24 @@ void execute_cgi(int client, const char *path,
     }
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     send(client, buf, strlen(buf), 0);
-    if (pid == 0)  /* child: CGI script */
+    if (pid == 0)  /* child: CGI script */ // pid==0 表示当前在子进程中
     {
         char meth_env[255];
         char query_env[255];
         char length_env[255];
-
-        dup2(cgi_output[1], STDOUT);
+        // dup2 文件描述符重定向
+        dup2(cgi_output[1], STDOUT); 
         dup2(cgi_input[0], STDIN);
         close(cgi_output[0]);
         close(cgi_input[1]);
         sprintf(meth_env, "REQUEST_METHOD=%s", method);
         putenv(meth_env);
+        // 这里两步应该是通过环境变量存储一些执行cgi需要的参数
+        // 例如GET请求的参数
+        // 但是比较奇怪，对于POST请求，没有读取body体，只是存储了body体长度 (body体的读取在父进程中)
+        // 第一个疑惑点，调用putenv将参数放到环境中，不同进程之间会有冲突吗？
+        // 比如进程A读取到了进程B的QUERY_STRING
+        // 做了测试，子进程可以读取父进程设置的环境变量，但父进程不行。
         if (strcasecmp(method, "GET") == 0) {
             sprintf(query_env, "QUERY_STRING=%s", query_string);
             putenv(query_env);
@@ -287,12 +293,13 @@ void execute_cgi(int client, const char *path,
             sprintf(length_env, "CONTENT_LENGTH=%d", content_length);
             putenv(length_env);
         }
-        execl(path, NULL);
+        execl(path, NULL); // 调用execl执行cgi文件
         exit(0);
     } else {    /* parent */
         close(cgi_output[1]);
         close(cgi_input[0]);
         if (strcasecmp(method, "POST") == 0)
+        // 这里是在读取body体，然后写到cgi_input[1]中
             for (i = 0; i < content_length; i++) {
                 recv(client, &c, 1, 0);
                 write(cgi_input[1], &c, 1);
@@ -302,7 +309,7 @@ void execute_cgi(int client, const char *path,
 
         close(cgi_output[0]);
         close(cgi_input[1]);
-        waitpid(pid, &status, 0);
+        waitpid(pid, &status, 0); // waitpid 等待指定的子进程结束
     }
 }
 
